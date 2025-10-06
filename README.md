@@ -4,7 +4,8 @@
 
 ## Features
 Attenuation is ignored.
-# Radiation Count Model
+
+## Radiation Count Model
 
 Let the sensor be at position `(x_s, y_s, z_s)`, and the `j`-th radiation source at `(x_j, y_j, z_j)` with emission `I_j`. Let the sensor “radius” be `r_s`.
 
