@@ -55,7 +55,7 @@ def add_radiation_sources(occ, n_sources, resolution):
     return sources, sources_xyz, I_list
 
 # visualization image
-def vis_map(occ, sources):
+def vis_map_create(occ, sources):
 
     H, W = occ.shape
 
@@ -152,3 +152,112 @@ def initialize_particles(N_particles, r_max, occ, resolution,
         })
 
     return particles # its a dictionary
+
+def visualize_particles(ax, occ, sources, particles, weights, resolution=0.1):
+    H, W = occ.shape
+    extent = [0, W * resolution, 0, H * resolution]
+
+    # draw occupancy map and true sources
+    vis_map = vis_map_create(occ, sources)
+    
+    ax.imshow(np.transpose(vis_map, (1, 0, 2)), origin='lower', extent=extent)
+
+    # normalize weights for visualization
+    norm_w = (weights - np.min(weights)) / (np.max(weights) - np.min(weights) + 1e-12)
+
+    # draw particle sources with color mapped by weight
+    for p, w in zip(particles, norm_w):
+        r_est = p['r']
+        if r_est == 0:
+            continue
+        for i in range(r_est):
+            x, y = p['sources_xy'][i]
+            # color map (you can change cmap name)
+            color = plt.cm.viridis(w)  
+            ax.scatter(x, y, color=color, s=15, alpha=0.6)
+
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    ax.set_title("Particle hypotheses (color = weight)")
+
+def normalize_log_weights(log_w):
+    # stable softmax: subtract max, exponentiate, normalize
+    a = np.max(log_w)
+    w = np.exp(log_w - a)
+    w /= np.sum(w)
+    return w
+
+def extract_particle_sources_and_I(p, default_z=1.0, default_I=1.0):
+    """
+    Return (sources_xyz, I_list) where:
+      - sources_xyz is shape (r_actual, 3)
+      - I_list is shape (r_actual,)
+
+    r_actual = min(p['r'], number of sources actually present in arrays)
+
+    Accepts particles with keys:
+      - 'sources_xyz' (shape (n,3) or (3,) or (n*3,) )
+      - or 'sources_xy' (shape (n,2) or (2,))
+    And intensity keys:
+      - 'I_list' or 'lambdas' (shape (n,) or (1,))
+    If intensities are missing for available sources, they are filled with `default_I`.
+    """
+    r = int(p.get("r", 0))
+
+    # --- sources -> produce s as shape (n_s, 3) ---
+    if "sources_xyz" in p:
+        s = np.asarray(p["sources_xyz"], dtype=float)
+        # normalize shapes: allow (3,) -> (1,3)
+        if s.ndim == 1 and s.size == 3:
+            s = s.reshape(1, 3)
+        elif s.ndim == 1 and s.size % 3 == 0:
+            s = s.reshape(-1, 3)
+        # if s.ndim == 2 and s.shape[1] != 3 try to reshape if possible
+        elif s.ndim == 2 and s.shape[1] != 3:
+            try:
+                s = s.reshape(-1, 3)
+            except Exception:
+                # fallback: take first two columns and append z
+                s = np.column_stack((s[:, 0], s[:, 1], np.ones(s.shape[0]) * default_z))
+    elif "sources_xy" in p:
+        s_xy = np.asarray(p["sources_xy"], dtype=float)
+        if s_xy.size == 0:
+            s = np.zeros((0, 3), dtype=float)
+        elif s_xy.ndim == 1 and s_xy.size == 2:
+            s = np.array([[s_xy[0], s_xy[1], default_z]], dtype=float)
+        elif s_xy.ndim == 2 and s_xy.shape[1] == 2:
+            s = np.column_stack((s_xy, np.ones(s_xy.shape[0]) * default_z))
+        else:
+            # try to reshape (n,2)
+            s_xy = s_xy.reshape(-1, 2)
+            s = np.column_stack((s_xy, np.ones(s_xy.shape[0]) * default_z))
+    else:
+        s = np.zeros((0, 3), dtype=float)
+
+    # --- intensities ---
+    if "I_list" in p:
+        I = np.asarray(p["I_list"], dtype=float).reshape(-1)
+    elif "lambdas" in p:
+        I = np.asarray(p["lambdas"], dtype=float).reshape(-1)
+    else:
+        I = np.zeros((0,), dtype=float)
+
+    # --- determine how many sources we can actually return ---
+    n_s = s.shape[0]
+    n_I = I.shape[0]
+    if n_I == 0:
+        # we only can rely on source positions; we'll fill intensities with default_I
+        n_take = min(r, n_s)
+    else:
+        n_take = min(r, n_s, n_I)
+
+    if n_take == 0:
+        return np.zeros((0, 3), dtype=float), np.zeros((0,), dtype=float)
+
+    s_out = s[:n_take].astype(float)
+    if n_I == 0:
+        I_out = np.ones(n_take, dtype=float) * default_I
+    else:
+        I_out = I[:n_take].astype(float)
+
+    return s_out, I_out

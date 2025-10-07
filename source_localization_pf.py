@@ -2,6 +2,7 @@ import lib_sim_setup as lss
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
+from scipy.stats import poisson
 
 resolution = 0.1 # [m/voxel]
 H = 50
@@ -18,7 +19,7 @@ occ_map = lss.create_occupancy_map(H, W, n_obstacles=10, seed=0)
 
 sources, sources_xyz, I_list = lss.add_radiation_sources(occ_map, n_sources, resolution)
 
-vis_map = lss.vis_map(occ_map, sources)
+vis_map = lss.vis_map_create(occ_map, sources)
 
 # visualization
 fig, ax = plt.subplots()
@@ -31,7 +32,7 @@ plt.show()
 
 # initialize particles
 
-N = 100
+N = 10
 
 particles = lss.initialize_particles(
     N_particles=N,
@@ -42,19 +43,49 @@ particles = lss.initialize_particles(
 )
 
 weights = np.ones(N) / N
+log_weights = np.log(weights)
 
 fig, ax = plt.subplots()
-ax.set_title("particle filter")
-ax.imshow(np.transpose(vis_map, (1, 0, 2)), origin='lower', extent=extent)
-ax.set_xlabel("X [m]")
-ax.set_ylabel("Y [m]")
-
-for p in particles:
-    r_est = p['r']
-    for i in range(r_est):
-        xi, yi = p['sources_xy'][i]
-        ax.scatter(xi, yi, c='cyan', s=5, alpha=0.3)
+lss.visualize_particles(ax, occ_map, sources, particles, weights, resolution=0.1)
 
 plt.show()
+
+sensor_z = 1.0    # sensor height (m)
+num_iters = 10
+
+fig, ax = plt.subplots()
+
+for it in range(num_iters):
+    # 1) sample measurement point (in meters)
+    mx, my = lss.sample_free_point_with_clearance(occ_map, resolution, r_vox=1, max_tries=10000)
+
+    # 2) simulate measurement from true sources
+    # use exp_count then Poisson sample (keeps sim deterministic/non-deterministic choice explicit)
+    meas_k = lss.sim_count((mx, my, sensor_z), sources_xyz, I_list, r_s=r_s)
+
+    # 3) update particles' log_weights by adding log-likelihood
+    for i, p in enumerate(particles):
+        s_xyz, I_p = lss.extract_particle_sources_and_I(p)
+        lam_pred = lss.exp_count((mx, my, sensor_z), s_xyz, I_p, r_s=r_s)
+        # add particle's background if present
+        if "lambda_b" in p:
+            lam_pred = lam_pred + float(p["lambda_b"])
+        lam_pred = max(lam_pred, 1e-12)   # avoid mu==0 for numerical stability
+        log_lik = poisson.logpmf(meas_k, mu=lam_pred)
+        # accumulate log-likelihood
+        log_weights[i] += log_lik
+
+    # 4) compute normalized linear weights for visualization and diagnostics
+    weights = lss.normalize_log_weights(log_weights)
+
+    # 5) visualize (color = weight)
+    lss.visualize_particles(ax, occ_map, sources, particles, weights, resolution=resolution)
+
+    plt.pause(0.001)
+
+
+plt.ioff()
+plt.show()
+
 
 
