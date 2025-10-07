@@ -94,10 +94,10 @@ ax.set_title("Click to sample count rate")
 def onclick(event):
     if event.xdata is None or event.ydata is None:
         return
-    x, y = event.xdata * resolution, event.ydata * resolution
+    x, y = event.xdata, event.ydata
     count = sim_count((x, y, sensor_z), sources_xy, sources_z, I_list, r_s=0.1)
-    ax.plot(event.xdata, event.ydata, 'bo')
-    ax.text(event.xdata+0.1, event.ydata, f"{count}", color='blue', fontsize=8)
+    ax.plot(x, y, 'bo')
+    ax.text(x+0.1, y, f"{count}", color='blue', fontsize=8)
     plt.draw()
     print(f"({x}, {y}) -> count rate = {count}")
 
