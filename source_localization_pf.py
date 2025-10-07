@@ -1,10 +1,12 @@
 import lib_sim_setup as lss
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 
 resolution = 0.1 # [m/voxel]
 H = 50
 W = 50
+h, w = H * resolution, W * resolution
 
 n_sources = 10
 
@@ -27,12 +29,32 @@ ax.set_ylabel("Y [m]")
 plt.show()
 
 
-x, y, z = 2.5, 3, 1
+# initialize particles
 
-sensor_xyz = [x, y, z]
+N = 100
 
-count = lss.sim_count(sensor_xyz, sources_xyz, I_list, r_s)
-exp_count = lss.exp_count(sensor_xyz, sources_xyz, I_list, r_s)
+particles = lss.initialize_particles(
+    N_particles=N,
+    r_max=5,
+    occ=occ_map,
+    resolution=0.1,
+    seed=0
+)
 
-print(f"({x}, {y}) -> count rate = {count}")
-print(f"({x}, {y}) -> expected count rate = {exp_count}")
+weights = np.ones(N) / N
+
+fig, ax = plt.subplots()
+ax.set_title("particle filter")
+ax.imshow(np.transpose(vis_map, (1, 0, 2)), origin='lower', extent=extent)
+ax.set_xlabel("X [m]")
+ax.set_ylabel("Y [m]")
+
+for p in particles:
+    r_est = p['r']
+    for i in range(r_est):
+        xi, yi = p['sources_xy'][i]
+        ax.scatter(xi, yi, c='cyan', s=5, alpha=0.3)
+
+plt.show()
+
+
