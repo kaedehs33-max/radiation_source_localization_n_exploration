@@ -52,7 +52,9 @@ lss.visualize_particles(ax, occ_map, sources, particles, weights, resolution=0.1
 plt.show()
 
 sensor_z = 1.0    # sensor height (m)
-num_iters = 25
+num_iters = 50
+
+measurements = []
 
 fig, (ax_particles, ax_estimate) = plt.subplots(1, 2, figsize=(10, 5))
 
@@ -69,14 +71,15 @@ ax_estimate.set_xlabel("X [m]")
 ax_estimate.set_ylabel("Y [m]")
 
 
-for it in range(num_iters):
+for it in range(num_iters): 
     # 1) sample measurement point (in meters)
     mx, my = lss.sample_free_point_with_clearance(occ_map, resolution, r_vox=1, max_tries=10000)
 
     # 2) simulate measurement from true sources
     # use exp_count then Poisson sample (keeps sim deterministic/non-deterministic choice explicit)
     meas_k = lss.sim_count((mx, my, sensor_z), sources_xyz, I_list, r_s=r_s)
-
+    # Store measurement in history
+    measurements.append((mx, my, sensor_z, meas_k))
     # 3) update particles' log_weights by adding log-likelihood
     for i, p in enumerate(particles):
         s_xyz, I_p = lss.extract_particle_sources_and_I(p)
@@ -112,7 +115,23 @@ for it in range(num_iters):
         # reset weights to uniform after resampling
         weights = np.ones(N) / N
         log_weights = np.log(weights)   # so you can resume accumulating log-likelihoods
-        
+
+        # recomputing weights based on history measurements
+        for i, p in enumerate(particles):
+            s_xyz, I_p = lss.extract_particle_sources_and_I(p)
+            lam_b = float(p.get("lambda_b", 0.0))
+            log_lik_sum = 0.0
+
+            for (mx_j, my_j, mz_j, k_j) in measurements:
+                lam_pred = lss.exp_count((mx_j, my_j, mz_j), s_xyz, I_p, r_s=r_s)
+                lam_pred = max(lam_pred + lam_b, 1e-12)
+                log_lik_sum += poisson.logpmf(k_j, mu=lam_pred)
+
+            log_weights[i] = log_lik_sum
+
+        # Normalize weights
+        weights = lss.normalize_log_weights(log_weights)
+
         print(f"Resampled at iter {it}, N_eff={N_eff:.1f}")
 
     r_est, sources_est, lambdas_est = lss.estimate_state_from_particles(particles, weights)
