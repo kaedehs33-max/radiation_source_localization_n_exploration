@@ -433,3 +433,9 @@ def estimate_state_from_particles(particles, weights):
     lambdas_est = np.nansum(all_l * sub_weights[:, None], axis=0)
 
     return r_est, sources_est, lambdas_est
+
+
+
+
+
+
