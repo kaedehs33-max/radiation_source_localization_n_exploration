@@ -9,7 +9,7 @@ H = 50
 W = 50
 h, w = H * resolution, W * resolution
 
-n_sources = 10
+n_sources = 4
 
 r_s = 0.1 # gamma sensor radius
 
@@ -32,7 +32,8 @@ plt.show()
 
 # initialize particles
 
-N = 10
+N = 100
+N_eff_thresh = 0.5 * N  # threshold for resampling
 
 particles = lss.initialize_particles(
     N_particles=N,
@@ -51,7 +52,7 @@ lss.visualize_particles(ax, occ_map, sources, particles, weights, resolution=0.1
 plt.show()
 
 sensor_z = 1.0    # sensor height (m)
-num_iters = 10
+num_iters = 20
 
 fig, ax = plt.subplots()
 
@@ -78,6 +79,30 @@ for it in range(num_iters):
     # 4) compute normalized linear weights for visualization and diagnostics
     weights = lss.normalize_log_weights(log_weights)
 
+    N_eff = 1.0 / np.sum(weights**2) # effective sample size
+
+    if N_eff < N_eff_thresh:
+        # perform systematic resampling
+        particles = lss.systematic_resample_particles(particles, weights)
+
+        # reset weights to uniform after resampling
+        weights = np.ones(N) / N
+        log_weights = np.log(weights)   # so you can resume accumulating log-likelihoods
+
+        # apply simple Gaussian perturbation (tune sigma values to taste)
+        particles = lss.perturb_particles_simple(particles, occ_map, resolution,
+                                                sigma_xy=0.3,
+                                                sigma_lambda=15.0,
+                                                sigma_lambda_b=0.6)
+
+        print(f"Resampled at iter {it}, N_eff={N_eff:.1f}")
+
+    r_est, sources_est, lambdas_est = lss.estimate_state_from_particles(particles, weights)
+    print(f"Iteration {it}: r_est = {r_est}")
+    print(f"Sources_est = \n{sources_est}")
+    print(f"Lambdas_est = {lambdas_est}")
+
+
     # 5) visualize (color = weight)
     lss.visualize_particles(ax, occ_map, sources, particles, weights, resolution=resolution)
 
@@ -86,6 +111,8 @@ for it in range(num_iters):
 
 plt.ioff()
 plt.show()
+
+
 
 
 

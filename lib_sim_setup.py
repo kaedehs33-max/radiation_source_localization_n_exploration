@@ -27,8 +27,8 @@ def create_occupancy_map(H=50, W=50, n_obstacles=10, seed=0):
 def find_surface_voxels(occ):
     H, W = occ.shape
     surface = np.zeros_like(occ, dtype=bool)
-    for y in range(1, H):
-        for x in range(1, W):
+    for y in range(1, H-1):
+        for x in range(1, W-1):
             if occ[y, x] == 1 and np.any(occ[y-1:y+2, x-1:x+2] == 0):
                 surface[y, x] = True
     return np.argwhere(surface)
@@ -261,3 +261,175 @@ def extract_particle_sources_and_I(p, default_z=1.0, default_I=1.0):
         I_out = I[:n_take].astype(float)
 
     return s_out, I_out
+
+def systematic_resample_particles(particles, weights):
+    """
+    Systematic resampling.
+    - particles: list of particle dicts
+    - weights: 1D numpy array, normalized (sum == 1)
+
+    Returns:
+      new_particles: list (len == len(particles)) of deep-ish copies of selected particles.
+    """
+    import numpy as np
+
+    N = len(particles)
+    if N == 0:
+        return []
+
+    # cumulative distribution
+    cumulative = np.cumsum(weights)
+    # positions: systematic samples in (0,1]
+    positions = (np.arange(N) + np.random.rand()) / N
+    # find corresponding indices
+    indexes = np.searchsorted(cumulative, positions, side='right')
+
+    new_particles = []
+    for idx in indexes:
+        p = particles[int(idx)]
+        # shallow-deep copy of particle contents (safe for arrays)
+        newp = {
+            'r': int(p.get('r', 0)),
+            'lambda_b': float(p.get('lambda_b', 0.0)),
+            'sources_xy': np.array(p.get('sources_xy', np.zeros((0,2))), copy=True),
+            'lambdas': np.array(p.get('lambdas', np.zeros((0,))), copy=True)
+        }
+        new_particles.append(newp)
+
+    return new_particles
+
+def perturb_particles_simple(particles, occ, resolution,
+                             sigma_xy=0.2,        # meters (stddev for x,y)
+                             sigma_lambda=10.0,   # intensity units (stddev for lambda)
+                             sigma_lambda_b=0.5,  # background rate stddev
+                             clip_positions=True):
+    """
+    Add simple Gaussian perturbation to each particle's parameters (except r).
+    - particles: list of particle dicts (each has 'r','lambda_b','sources_xy','lambdas')
+    - occ: occupancy map (used to clip to map bounds if clip_positions True)
+    - resolution: meters per voxel (used to compute map bounds)
+    - sigma_*: standard deviations for Gaussian noise for each variable
+    Returns: particles (modified in-place and also returned)
+    """
+    import numpy as np
+
+    H, W = occ.shape
+    x_min, x_max = 0.0, W * resolution
+    y_min, y_max = 0.0, H * resolution
+
+    for p in particles:
+        # perturb background
+        if "lambda_b" in p:
+            p["lambda_b"] = float(p.get("lambda_b", 0.0) + sigma_lambda_b * np.random.randn())
+            if p["lambda_b"] < 0:
+                p["lambda_b"] = 0.0
+
+        # perturb sources positions and intensities
+        s_xy = p.get("sources_xy", None)
+        lams = p.get("lambdas", None)
+
+        if s_xy is None or lams is None:
+            # nothing to perturb
+            continue
+
+        # If arrays are empty, skip
+        if s_xy.size == 0:
+            p["sources_xy"] = np.zeros((0, 2))
+            p["lambdas"] = np.zeros((0,))
+            p["r"] = 0
+            continue
+
+        # add noise to x,y (shape (r,2))
+        noise_xy = sigma_xy * np.random.randn(*s_xy.shape)
+        s_xy = s_xy.astype(float) + noise_xy
+
+        # add noise to lambdas
+        noise_l = sigma_lambda * np.random.randn(lams.shape[0])
+        lams = lams.astype(float) + noise_l
+
+        # clip positions to map bounds (if requested)
+        if clip_positions:
+            s_xy[:, 0] = np.clip(s_xy[:, 0], x_min, x_max)
+            s_xy[:, 1] = np.clip(s_xy[:, 1], y_min, y_max)
+
+        # remove sources with non-positive intensity
+        keep_mask = lams > 0.0
+        if np.any(~keep_mask):
+            if np.sum(keep_mask) == 0:
+                # all sources died
+                p["sources_xy"] = np.zeros((0, 2))
+                p["lambdas"] = np.zeros((0,))
+                p["r"] = 0
+                continue
+            else:
+                p["sources_xy"] = s_xy[keep_mask]
+                p["lambdas"] = lams[keep_mask]
+                p["r"] = int(p["sources_xy"].shape[0])
+        else:
+            p["sources_xy"] = s_xy
+            p["lambdas"] = lams
+            p["r"] = int(p["sources_xy"].shape[0])
+
+    return particles
+
+def estimate_state_from_particles(particles, weights):
+    """
+    Estimate number of sources (r_est) and average source positions/intensities.
+
+    Parameters
+    ----------
+    particles : list of dict
+        Each particle has keys 'r', 'sources_xy', 'lambdas'
+    weights : np.ndarray
+        Normalized particle weights, shape (N,)
+
+    Returns
+    -------
+    r_est : int
+        Estimated number of sources
+    sources_est : np.ndarray, shape (r_est, 2)
+        Weighted mean positions of estimated sources
+    lambdas_est : np.ndarray, shape (r_est,)
+        Weighted mean intensities of estimated sources
+    """
+
+    import numpy as np
+
+    # estimated number of sources (rounded expectation)
+    r_exp = np.sum([w * p["r"] for w, p in zip(weights, particles)])
+    r_est = int(np.floor(r_exp + 0.5))
+
+    # select particles with that r
+    mask = np.array([p["r"] == r_est for p in particles])
+    if not np.any(mask):
+        # fallback: choose the most frequent r
+        unique, counts = np.unique([p["r"] for p in particles], return_counts=True)
+        r_est = unique[np.argmax(counts)]
+        mask = np.array([p["r"] == r_est for p in particles])
+
+    sub_particles = [p for p, m in zip(particles, mask) if m]
+    sub_weights = weights[mask]
+    sub_weights /= np.sum(sub_weights)
+
+    # average over source positions and intensities
+    if r_est == 0:
+        return 0, np.zeros((0, 2)), np.zeros((0,))
+
+    # Align all source lists by index (1st source, 2nd source, ...)
+    # If some particle has fewer sources (shouldn’t happen here, all have r_est)
+    # we pad with NaNs and ignore them.
+    all_xy = np.full((len(sub_particles), r_est, 2), np.nan)
+    all_l = np.full((len(sub_particles), r_est), np.nan)
+
+    for i, p in enumerate(sub_particles):
+        sxy = np.asarray(p["sources_xy"])
+        lam = np.asarray(p["lambdas"])
+        n = min(r_est, sxy.shape[0])
+        all_xy[i, :n, :] = sxy[:n, :]
+        all_l[i, :n] = lam[:n]
+
+    # weighted mean ignoring NaNs
+    sources_est = np.nansum(all_xy * sub_weights[:, None, None], axis=0)
+    lambdas_est = np.nansum(all_l * sub_weights[:, None], axis=0)
+
+    return r_est, sources_est, lambdas_est
