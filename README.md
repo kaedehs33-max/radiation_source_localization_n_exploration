@@ -1,6 +1,8 @@
 # radiation_source_localization_n_exploration
 ![Simulation Demo](animation_count_sim.gif)
 ![Simulation Demo](animation_count_map.gif)
+![Description](pf_simplified_result.png)
+
 
 ## Features
 Attenuation is ignored.

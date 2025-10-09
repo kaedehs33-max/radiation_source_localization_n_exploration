@@ -54,7 +54,20 @@ plt.show()
 sensor_z = 1.0    # sensor height (m)
 num_iters = 20
 
-fig, ax = plt.subplots()
+fig, (ax_particles, ax_estimate) = plt.subplots(1, 2, figsize=(10, 5))
+
+# ----- Left: Particles -----
+ax_particles.set_title("Particles and Measurement")
+ax_particles.imshow(np.transpose(vis_map, (1, 0, 2)), origin='lower', extent=extent)
+ax_particles.set_xlabel("X [m]")
+ax_particles.set_ylabel("Y [m]")
+
+# ----- Right: Ground truth vs Estimated -----
+ax_estimate.set_title("Estimation vs Truth")
+ax_estimate.imshow(np.transpose(vis_map, (1, 0, 2)), origin='lower', extent=extent)
+ax_estimate.set_xlabel("X [m]")
+ax_estimate.set_ylabel("Y [m]")
+
 
 for it in range(num_iters):
     # 1) sample measurement point (in meters)
@@ -103,10 +116,29 @@ for it in range(num_iters):
     print(f"Lambdas_est = {lambdas_est}")
 
 
-    # 5) visualize (color = weight)
-    lss.visualize_particles(ax, occ_map, sources, particles, weights, resolution=resolution)
 
-    plt.pause(0.001)
+    ax_particles.collections.clear()
+    ax_particles.patches.clear()
+    ax_estimate.collections.clear()
+    ax_estimate.patches.clear()
+
+    # ----- Update left subplot -----
+    lss.visualize_particles(ax_particles, occ_map, sources, particles, weights, resolution=resolution)
+   
+     # ----- Update right subplot ----- 
+    if r_est > 0:
+        # use distinct colors per estimated source
+        cmap = plt.cm.tab10  # or 'Set1', 'tab20', etc.
+        for j, (x_est, y_est) in enumerate(sources_est):
+            color = cmap(j % cmap.N)
+            ax_estimate.scatter(
+                x_est, y_est,
+                facecolors='none', edgecolors=color,
+                s=200, linewidths=2,
+                label=f'Estimated source {j+1}'
+            )
+    # ax_estimate.legend(loc='upper right')
+    plt.pause(0.01)
 
 
 plt.ioff()
