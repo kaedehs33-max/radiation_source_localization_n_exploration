@@ -48,11 +48,11 @@ def find_surface_voxels(occ):
 surf_coords = find_surface_voxels(occ_map)
 
 # place some sources randomly on surface voxels
-n_sources = 20
+n_sources = 1
 src_indices = np.random.choice(len(surf_coords), n_sources, replace=False)
 sources = surf_coords[src_indices]
 sources_z = np.random.uniform(0.5, 1.5, n_sources)  # random z height
-I_list = np.random.uniform(50, 100, size=n_sources) # intensity (bq)
+I_list = np.random.uniform(90, 100, size=n_sources) # intensity (bq)
 
 H, W = occ_map.shape
 extent=[0, W*resolution, 0, H*resolution]

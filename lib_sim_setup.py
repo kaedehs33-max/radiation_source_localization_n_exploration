@@ -45,7 +45,7 @@ def add_radiation_sources(occ, n_sources, resolution):
     # sources_z = np.random.uniform(0.5, 1.5, n_sources)  # random z height
     sources_z = np.full(n_sources, 1.0)
 
-    I_list = np.random.uniform(50, 100, size=n_sources) # intensity (bq)
+    I_list = np.random.uniform(90, 100, size=n_sources) # intensity (sensed count at 1m)
 
     H, W = occ.shape
 
@@ -105,7 +105,7 @@ def sample_free_point_with_clearance(occ, resolution=1.0, r_vox=1, max_tries=100
 
 def initialize_particles(N_particles, r_max, occ, resolution,
                          lambda_b_range=(1, 10),
-                         lambda_shape=2.0, lambda_scale=20.0,
+                         lambda_shape=50, lambda_scale=2.0,
                          seed=None):
     """
     Initialize N_particles particles for multi-source estimation.
@@ -132,12 +132,10 @@ def initialize_particles(N_particles, r_max, occ, resolution,
         sources_xy = []
         lambdas = []
         for _ in range(r):
-            # sample valid free point
+            # sample point
             for _ in range(1000):
                 x_pix = np.random.uniform(0, W)
                 y_pix = np.random.uniform(0, H)
-                if occ[int(y_pix), int(x_pix)] == 0:
-                    break
             x = x_pix * resolution
             y = y_pix * resolution
             lam = np.random.gamma(lambda_shape, lambda_scale)
@@ -434,8 +432,76 @@ def estimate_state_from_particles(particles, weights):
 
     return r_est, sources_est, lambdas_est
 
+def _random_point_in_world(occ, resolution):
+    """Sample a random point uniformly within map bounds (no free-space restriction)."""
+    import numpy as np
+    H, W = occ.shape
+    x_pix = np.random.rand() * (W - 1)
+    y_pix = np.random.rand() * (H - 1)
+    x = x_pix * resolution
+    y = y_pix * resolution
+    return x, y
 
+def death_move_random(particles, weights, p_death=0.2):
+    """
+    For each particle, with prob p_death remove a random source (if any).
+    Modifies particles in-place.
+    """
+    import numpy as np
+    for i, p in enumerate(particles):
+        wi = weights[i]
+        if p.get('r', 0) > 0 and np.random.rand() < p_death * (1 - wi):
+            r = p['r']
+            idx = np.random.randint(0, r)
+            mask = np.ones(r, dtype=bool)
+            mask[idx] = False
+            p['sources_xy'] = p['sources_xy'][mask]
+            p['lambdas'] = p['lambdas'][mask]
+            p['r'] = p['sources_xy'].shape[0]
+    return particles
 
-
-
-
+def birth_move_from_particles(particles, weights, occ, resolution, p_birth=0.3,
+                              sigma_birth_xy=1.0, lambda_shape=2.0, lambda_scale=20.0):
+    """
+    For each particle (loop), with prob p_birth propose a birth:
+      - choose a particle index j with prob proportional to weights
+      - pick one of particle j's sources (or its centroid) as a center
+      - sample new source position ~ N(center, sigma_birth_xy)
+      - sample lambda from Gamma
+    This uses the global particle set (weights) to guide proposals.
+    """
+    import numpy as np
+    N = len(particles)
+    if N == 0:
+        return particles
+    # sample indices for proposals (pre-sample to avoid bias from sequential updates)
+    for i, p in enumerate(particles):
+        wi = weights[i]
+        if np.random.rand() < p_birth * (1 - wi):
+            # pick a guiding particle index j
+            j = np.random.choice(np.arange(N), p=weights)
+            guide = particles[j]
+            # choose a center: if guide has sources pick one randomly else pick random free location
+            if guide.get('r', 0) > 0:
+                src_idx = np.random.randint(0, guide['r'])
+                cx, cy = guide['sources_xy'][src_idx]
+            else:
+                # fallback: random free point
+                cx, cy = _random_point_in_world(occ, resolution)
+            # sample a perturbed location around center
+            x_new = cx + sigma_birth_xy * np.random.randn()
+            y_new = cy + sigma_birth_xy * np.random.randn()
+            # clip to map bounds
+            Hpix, Wpix = occ.shape
+            x_new = np.clip(x_new, 0.0, (Wpix-1)*resolution)
+            y_new = np.clip(y_new, 0.0, (Hpix-1)*resolution)
+            lam = np.random.gamma(lambda_shape, lambda_scale)
+            # append to particle p
+            if p.get('r', 0) == 0:
+                p['sources_xy'] = np.array([[x_new, y_new]])
+                p['lambdas'] = np.array([lam])
+            else:
+                p['sources_xy'] = np.vstack([p['sources_xy'], np.array([x_new,y_new])])
+                p['lambdas'] = np.hstack([p['lambdas'], lam])
+            p['r'] = p['sources_xy'].shape[0]
+    return particles

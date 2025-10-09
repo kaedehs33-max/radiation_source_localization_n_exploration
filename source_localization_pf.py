@@ -9,7 +9,7 @@ H = 50
 W = 50
 h, w = H * resolution, W * resolution
 
-n_sources = 4
+n_sources = 2
 
 r_s = 0.1 # gamma sensor radius
 
@@ -33,11 +33,11 @@ plt.show()
 # initialize particles
 
 N = 100
-N_eff_thresh = 0.5 * N  # threshold for resampling
+N_eff_thresh = 0.2 * N  # threshold for resampling
 
 particles = lss.initialize_particles(
     N_particles=N,
-    r_max=5,
+    r_max=4,
     occ=occ_map,
     resolution=0.1,
     seed=0
@@ -52,7 +52,7 @@ lss.visualize_particles(ax, occ_map, sources, particles, weights, resolution=0.1
 plt.show()
 
 sensor_z = 1.0    # sensor height (m)
-num_iters = 20
+num_iters = 25
 
 fig, (ax_particles, ax_estimate) = plt.subplots(1, 2, figsize=(10, 5))
 
@@ -98,16 +98,21 @@ for it in range(num_iters):
         # perform systematic resampling
         particles = lss.systematic_resample_particles(particles, weights)
 
+        # apply simple Gaussian perturbation (tune sigma values to taste)
+        particles = lss.perturb_particles_simple(particles, occ_map, resolution,
+                                                sigma_xy=0.2,
+                                                sigma_lambda=5.0,
+                                                sigma_lambda_b=0.6)
+
+        # death / birth:
+        particles = lss.death_move_random(particles, weights, p_death=0.2)
+        
+        particles = lss.birth_move_from_particles(particles, weights, occ_map, resolution, p_birth=0.2)
+        
         # reset weights to uniform after resampling
         weights = np.ones(N) / N
         log_weights = np.log(weights)   # so you can resume accumulating log-likelihoods
-
-        # apply simple Gaussian perturbation (tune sigma values to taste)
-        particles = lss.perturb_particles_simple(particles, occ_map, resolution,
-                                                sigma_xy=0.3,
-                                                sigma_lambda=15.0,
-                                                sigma_lambda_b=0.6)
-
+        
         print(f"Resampled at iter {it}, N_eff={N_eff:.1f}")
 
     r_est, sources_est, lambdas_est = lss.estimate_state_from_particles(particles, weights)
