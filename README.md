@@ -41,3 +41,5 @@ $$
 k \sim \text{Poisson}(\lambda)
 $$
 
+## reference
+- Lazna, Tomas, and Ludek Zalud. "Localizing multiple radiation sources actively with a particle filter." Nuclear Engineering and Technology 57, no. 2 (2025): 103171.

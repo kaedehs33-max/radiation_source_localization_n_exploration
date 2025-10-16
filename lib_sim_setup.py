@@ -260,7 +260,7 @@ def extract_particle_sources_and_I(p, default_z=1.0, default_I=1.0):
 
     return s_out, I_out
 
-def systematic_resample_particles(particles, weights):
+def systematic_resample_particles(particles, weights, occ:np.ndarray, resolution=0.1):
     """
     Systematic resampling.
     - particles: list of particle dicts
@@ -274,6 +274,12 @@ def systematic_resample_particles(particles, weights):
     N = len(particles)
     if N == 0:
         return []
+    
+    H, W = occ.shape
+
+    epsilons = np.random.rand(N)
+    
+    sources_xy_rand = np.random.rand(N, 2) * np.array([W - 1, H - 1]) * resolution
 
     # cumulative distribution
     cumulative = np.cumsum(weights)
@@ -286,10 +292,13 @@ def systematic_resample_particles(particles, weights):
     for idx in indexes:
         p = particles[int(idx)]
         # shallow-deep copy of particle contents (safe for arrays)
+
         newp = {
             'r': int(p.get('r', 0)),
             'lambda_b': float(p.get('lambda_b', 0.0)),
-            'sources_xy': np.array(p.get('sources_xy', np.zeros((0,2))), copy=True),
+            'sources_xy': np.array(p.get('sources_xy', np.zeros((0,2))), copy=True) \
+                if epsilons[int(idx)] > 0.05 \
+                else np.random.rand(len(p.get('sources_xy', np.zeros((0,2)))), 2) * np.array([W - 1, H - 1]) * resolution,
             'lambdas': np.array(p.get('lambdas', np.zeros((0,))), copy=True)
         }
         new_particles.append(newp)
@@ -316,6 +325,8 @@ def perturb_particles_simple(particles, occ, resolution,
     y_min, y_max = 0.0, H * resolution
 
     for p in particles:
+        # if p.size() == 0:
+        #     continue
         # perturb background
         if "lambda_b" in p:
             p["lambda_b"] = float(p.get("lambda_b", 0.0) + sigma_lambda_b * np.random.randn())
@@ -460,7 +471,7 @@ def death_move_random(particles, weights, p_death=0.2):
             p['r'] = p['sources_xy'].shape[0]
     return particles
 
-def birth_move_from_particles(particles, weights, occ, resolution, p_birth=0.3,
+def birth_move_from_particles(particles, weights, occ, resolution, r_max, p_birth=0.3,
                               sigma_birth_xy=1.0, lambda_shape=2.0, lambda_scale=20.0):
     """
     For each particle (loop), with prob p_birth propose a birth:
@@ -477,7 +488,8 @@ def birth_move_from_particles(particles, weights, occ, resolution, p_birth=0.3,
     # sample indices for proposals (pre-sample to avoid bias from sequential updates)
     for i, p in enumerate(particles):
         wi = weights[i]
-        if np.random.rand() < p_birth * (1 - wi):
+        ri = p['r']
+        if np.random.rand() < p_birth * (1 - wi) and ri < r_max:
             # pick a guiding particle index j
             j = np.random.choice(np.arange(N), p=weights)
             guide = particles[j]

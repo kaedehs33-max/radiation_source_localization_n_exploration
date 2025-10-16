@@ -9,7 +9,7 @@ H = 50
 W = 50
 h, w = H * resolution, W * resolution
 
-n_sources = 2
+n_sources = 3
 
 r_s = 0.1 # gamma sensor radius
 
@@ -35,9 +35,11 @@ plt.show()
 N = 100
 N_eff_thresh = 0.2 * N  # threshold for resampling
 
+r_max=5
+
 particles = lss.initialize_particles(
     N_particles=N,
-    r_max=4,
+    r_max=r_max,
     occ=occ_map,
     resolution=0.1,
     seed=0
@@ -99,18 +101,18 @@ for it in range(num_iters):
 
     if N_eff < N_eff_thresh:
         # perform systematic resampling
-        particles = lss.systematic_resample_particles(particles, weights)
+        particles = lss.systematic_resample_particles(particles, weights, occ_map, resolution=0.1)
 
         # apply simple Gaussian perturbation (tune sigma values to taste)
         particles = lss.perturb_particles_simple(particles, occ_map, resolution,
-                                                sigma_xy=0.2,
+                                                sigma_xy=0.5,
                                                 sigma_lambda=5.0,
                                                 sigma_lambda_b=0.6)
 
         # death / birth:
-        particles = lss.death_move_random(particles, weights, p_death=0.2)
+        particles = lss.death_move_random(particles, weights, p_death=0.3)
         
-        particles = lss.birth_move_from_particles(particles, weights, occ_map, resolution, p_birth=0.2)
+        particles = lss.birth_move_from_particles(particles, weights, occ_map, resolution, r_max, p_birth=0.3)
         
         # reset weights to uniform after resampling
         weights = np.ones(N) / N
